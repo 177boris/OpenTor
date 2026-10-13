@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import sys
 import threading
 import time
 import uuid
@@ -118,13 +119,13 @@ def crawl(
             if extract_entities:
                 for k, v in entities.items():
                     if isinstance(v, list):
-                        all_entities[k].extend(v)
+                        all_entities.setdefault(k, []).extend(v)
                     elif isinstance(v, int):
                         all_entities[k] = all_entities.get(k, 0) + v
 
         # Record all discovered outbound links (for the link graph)
         for link in result.get("links", []):
-            href = link.get("href", "")
+            href = urljoin(url, link.get("href", ""))
             if not href:
                 continue
             _clean_href = href.rstrip("/")
@@ -137,7 +138,7 @@ def crawl(
         child_links: list[tuple[str, int]] = []
         if depth < max_depth:
             for link in result.get("links", []):
-                href = link.get("href", "")
+                href = urljoin(url, link.get("href", ""))
                 if not href or ".onion" not in href:
                     continue
                 if stay_on_domain and urlparse(href).netloc != seed_host:
@@ -165,8 +166,13 @@ def crawl(
                 try:
                     children = fut.result()
                     queue.extend(children)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Do not swallow crawl failures — surface them with context so a
+                    # broken fetch or parser cannot masquerade as a successful crawl.
+                    print(
+                        f"[crawl] {type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
 
         if pages_crawled >= max_pages:
             break
